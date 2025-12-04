@@ -15,6 +15,11 @@ class Car extends Model
         'plate_number',
         'year',
         'price_per_day',
-        'image'
+        'image', // main image (optional)
     ];
+
+    public function images()
+    {
+        return $this->hasMany(CarImage::class);
+    }
 }

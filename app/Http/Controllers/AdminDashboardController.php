@@ -9,34 +9,38 @@ use Carbon\Carbon;
 
 class AdminDashboardController extends Controller
 {
+    /**
+     * MAIN DASHBOARD STATS
+     */
     public function stats()
     {
-        // 📌 User Counts
+        // USER COUNTS
         $totalUsers     = User::count();
         $totalAdmins    = User::where('role', 'admin')->count();
         $totalStaff     = User::where('role', 'staff')->count();
         $totalCustomers = User::where('role', 'customer')->count();
 
-        // 📌 Cars Count
+        // CARS COUNT
         $totalCars = Car::count();
 
-        // 📌 Reservation Counts
-        $totalReservations   = Reservation::count();
-        $pendingReservations = Reservation::where('status', 'pending')->count();
-        $acceptedReservations = Reservation::where('status', 'accepted')->count();
-        $declinedReservations = Reservation::where('status', 'declined')->count();
+        // RESERVATION COUNTS
+        $totalReservations     = Reservation::count();
+        $pendingReservations   = Reservation::where('status', 'pending')->count();
+        $acceptedReservations  = Reservation::where('status', 'accepted')->count();
+        $declinedReservations  = Reservation::where('status', 'declined')->count();
 
-        // 📌 Time-based statistics
+        // TIME FILTERS
         $today     = Carbon::today();
         $thisWeek  = Carbon::now()->subDays(7);
         $thisMonth = Carbon::now()->startOfMonth();
 
-        $todayReservations     = Reservation::whereDate('created_at', $today)->count();
-        $weeklyReservations    = Reservation::where('created_at', '>=', $thisWeek)->count();
-        $monthlyReservations   = Reservation::where('created_at', '>=', $thisMonth)->count();
+        $todayReservations   = Reservation::whereDate('created_at', $today)->count();
+        $weeklyReservations  = Reservation::where('created_at', '>=', $thisWeek)->count();
+        $monthlyReservations = Reservation::where('created_at', '>=', $thisMonth)->count();
 
-        // OPTIONAL: Revenue approximation (only accepted reservations)
-        $estimatedRevenue = Reservation::where('status', 'accepted')->sum('price_estimate');
+        // REVENUE (only accepted)
+        $estimatedRevenue = Reservation::where('status', 'accepted')
+            ->sum('price_estimate');
 
         return response()->json([
             'users' => [
@@ -61,8 +65,31 @@ class AdminDashboardController extends Controller
                 'this_month' => $monthlyReservations,
             ],
 
-            // OPTIONAL: only if you want revenue tracking
             'estimated_revenue' => $estimatedRevenue ?? 0
         ], 200);
+    }
+
+    /**
+     * MONTHLY STATS (For charts)
+     */
+    public function monthlyStats()
+    {
+        // RESERVATIONS COUNT BY MONTH
+        $reservations = Reservation::selectRaw('COUNT(*) as total, MONTH(created_at) as month')
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get();
+
+        // REVENUE BY MONTH
+        $revenue = Reservation::where('status', 'accepted')
+            ->selectRaw('SUM(price_estimate) as total, MONTH(created_at) as month')
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get();
+
+        return response()->json([
+            'reservations' => $reservations,
+            'revenue'      => $revenue,
+        ]);
     }
 }

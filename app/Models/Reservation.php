@@ -14,7 +14,8 @@ class Reservation extends Model
         'car_id',
         'start_date',
         'end_date',
-        'status'
+        'status',
+        'price_estimate',
     ];
 
     public function user()

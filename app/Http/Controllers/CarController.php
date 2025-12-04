@@ -3,68 +3,65 @@
 namespace App\Http\Controllers;
 
 use App\Models\Car;
+use App\Models\CarImage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class CarController extends Controller
 {
-    // 🟢 PUBLIC — Everyone can browse cars (with search & filters)
+    // 🟢 PUBLIC — Browse cars
     public function index(Request $request)
     {
-        $query = Car::query();
+        $query = Car::with('images');
 
-        // 🔍 Generic search (brand or model)
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('brand', 'LIKE', "%$search%")
-                  ->orWhere('model', 'LIKE', "%$search%");
+        // SEARCH
+        if ($request->search) {
+            $query->where(function ($q) use ($request) {
+                $q->where('brand', 'LIKE', "%{$request->search}%")
+                  ->orWhere('model', 'LIKE', "%{$request->search}%");
             });
         }
 
-        // 🔍 Specific brand filter
-        if ($request->has('brand')) {
-            $query->where('brand', 'LIKE', '%' . $request->brand . '%');
+        // BRAND FILTER
+        if ($request->brand) {
+            $query->where('brand', 'LIKE', "%{$request->brand}%");
         }
 
-        // 🔍 Specific model filter
-        if ($request->has('model')) {
-            $query->where('model', 'LIKE', '%' . $request->model . '%');
+        // MODEL FILTER
+        if ($request->model) {
+            $query->where('model', 'LIKE', "%{$request->model}%");
         }
 
-        // 🔍 Filter by year
-        if ($request->has('year')) {
+        // YEAR
+        if ($request->year) {
             $query->where('year', $request->year);
         }
 
-        // 💰 Minimum price filter
-        if ($request->has('price_min')) {
+        // PRICE
+        if ($request->price_min) {
             $query->where('price_per_day', '>=', $request->price_min);
         }
 
-        // 💰 Maximum price filter
-        if ($request->has('price_max')) {
+        if ($request->price_max) {
             $query->where('price_per_day', '<=', $request->price_max);
         }
 
-        // 📄 Paginate (10 per page)
-        $cars = $query->paginate(10);
-
-        return response()->json($cars, 200);
+        return response()->json($query->paginate(10), 200);
     }
 
-    // 🟢 PUBLIC — View single car
+    // 🟢 PUBLIC — Single car
     public function show($id)
     {
-        $car = Car::find($id);
+        $car = Car::with('images')->find($id);
 
         if (!$car) {
             return response()->json(['message' => 'Car not found'], 404);
         }
 
-        return response()->json($car, 200);
+        return response()->json($car);
     }
 
-    // 🔐 ADMIN + STAFF — Create car (supports image)
+    // 🔐 ADMIN — Create car
     public function store(Request $request)
     {
         $request->validate([
@@ -76,8 +73,8 @@ class CarController extends Controller
             'image'         => 'nullable|image|mimes:jpeg,png,jpg,webp|max:4096',
         ]);
 
-        // Upload image if present
         $imagePath = null;
+
         if ($request->hasFile('image')) {
             $imagePath = $request->file('image')->store('cars', 'public');
         }
@@ -92,13 +89,12 @@ class CarController extends Controller
         ]);
 
         return response()->json([
-            'message'    => 'Car added successfully',
-            'car'        => $car,
-            'image_url'  => $imagePath ? asset('storage/' . $imagePath) : null
+            'message' => 'Car created successfully',
+            'car'     => $car
         ], 201);
     }
 
-    // 🔐 ADMIN + STAFF — Update car (supports new image upload)
+    // 🔐 ADMIN — Update car
     public function update(Request $request, $id)
     {
         $car = Car::find($id);
@@ -110,50 +106,61 @@ class CarController extends Controller
         $request->validate([
             'brand'         => 'sometimes|required|string',
             'model'         => 'sometimes|required|string',
-            'plate_number'  => 'sometimes|required|string|unique:cars,plate_number,' . $id,
+            'plate_number'  => "sometimes|required|string|unique:cars,plate_number,$id",
             'year'          => 'sometimes|required|integer',
             'price_per_day' => 'sometimes|required|numeric',
             'image'         => 'nullable|image|mimes:jpeg,png,jpg,webp|max:4096',
         ]);
 
-        // Update text fields
-        $car->brand         = $request->brand ?? $car->brand;
-        $car->model         = $request->model ?? $car->model;
-        $car->plate_number  = $request->plate_number ?? $car->plate_number;
-        $car->year          = $request->year ?? $car->year;
-        $car->price_per_day = $request->price_per_day ?? $car->price_per_day;
+        // Exclude image field so update() won't break
+        $car->update($request->except('image'));
 
-        // Upload new image if provided
+        // Replace main image
         if ($request->hasFile('image')) {
-            $imagePath = $request->file('image')->store('cars', 'public');
-            $car->image = $imagePath;
+
+            // delete old image
+            if ($car->image) {
+                Storage::disk('public')->delete($car->image);
+            }
+
+            $path = $request->file('image')->store('cars', 'public');
+            $car->image = $path;
+            $car->save();
         }
 
-        $car->save();
-
         return response()->json([
-            'message'    => 'Car updated successfully',
-            'car'        => $car,
-            'image_url'  => $car->image ? asset('storage/' . $car->image) : null
-        ], 200);
+            'message' => 'Car updated successfully',
+            'car'     => $car
+        ]);
     }
 
-    // 🔐 ADMIN + STAFF — Delete car
+    // 🔐 ADMIN — Delete car
     public function destroy($id)
     {
-        $car = Car::find($id);
+        $car = Car::with('images')->find($id);
 
         if (!$car) {
             return response()->json(['message' => 'Car not found'], 404);
         }
 
+        // delete main image
+        if ($car->image) {
+            Storage::disk('public')->delete($car->image);
+        }
+
+        // delete all sub images
+        foreach ($car->images as $img) {
+            Storage::disk('public')->delete($img->image);
+            $img->delete();
+        }
+
         $car->delete();
 
-        return response()->json(['message' => 'Car deleted successfully'], 200);
+        return response()->json(['message' => 'Car deleted successfully']);
     }
 
-    // 🔐 ADMIN + STAFF — Upload image separately
-    public function uploadImage(Request $request, $id)
+    // 🔐 ADMIN — Upload MULTIPLE images
+    public function uploadImages(Request $request, $id)
     {
         $car = Car::find($id);
 
@@ -162,20 +169,41 @@ class CarController extends Controller
         }
 
         $request->validate([
-            'image' => 'required|image|mimes:jpeg,png,jpg,webp|max:4096',
+            'images'   => 'required|array',
+            'images.*' => 'image|mimes:jpeg,png,jpg,webp|max:4096'
         ]);
 
-        // Store file in storage/app/public/cars
-        $path = $request->file('image')->store('cars', 'public');
+        $uploaded = [];
 
-        // Update car record
-        $car->image = $path;
-        $car->save();
+        foreach ($request->file('images') as $file) {
+            $path = $file->store('cars', 'public');
+
+            $img = CarImage::create([
+                'car_id' => $id,
+                'image'  => $path,
+            ]);
+
+            $uploaded[] = asset("storage/$path");
+        }
 
         return response()->json([
-            'message'   => 'Image uploaded successfully',
-            'image_url' => asset('storage/' . $path),
-            'car'       => $car
-        ], 200);
+            'message' => 'Images uploaded successfully',
+            'images'  => $uploaded
+        ]);
+    }
+
+    // 🔐 ADMIN — Delete single image
+    public function deleteImage($imageId)
+    {
+        $image = CarImage::find($imageId);
+
+        if (!$image) {
+            return response()->json(['message' => 'Image not found'], 404);
+        }
+
+        Storage::disk('public')->delete($image->image);
+        $image->delete();
+
+        return response()->json(['message' => 'Image deleted successfully']);
     }
 }

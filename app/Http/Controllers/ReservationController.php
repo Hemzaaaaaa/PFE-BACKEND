@@ -10,7 +10,11 @@ use Carbon\Carbon;
 
 class ReservationController extends Controller
 {
-    // 🟢 Create reservation (only verified users)
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE RESERVATION (USER, VERIFIED)
+    |--------------------------------------------------------------------------
+    */
     public function store(Request $request)
     {
         $request->validate([
@@ -21,19 +25,19 @@ class ReservationController extends Controller
 
         // Prevent double booking
         $overlap = Reservation::where('car_id', $request->car_id)
+            ->where('status', '!=', 'declined')
             ->where(function ($query) use ($request) {
                 $query->where('start_date', '<=', $request->end_date)
                       ->where('end_date', '>=', $request->start_date);
             })
-            ->where('status', '!=', 'declined')
             ->exists();
 
         if ($overlap) {
             return response()->json(['message' => 'Car already reserved for these dates'], 409);
         }
 
-        // Calculate price estimate
-        $car = Car::find($request->car_id);
+        // Price calculation
+        $car = Car::findOrFail($request->car_id);
         $days = Carbon::parse($request->start_date)->diffInDays($request->end_date) + 1;
         $priceEstimate = $days * $car->price_per_day;
 
@@ -53,7 +57,27 @@ class ReservationController extends Controller
         ], 201);
     }
 
-    // 🟢 User views their reservations
+
+    /*
+    |--------------------------------------------------------------------------
+    | CALENDAR — Get reserved dates for a car
+    |--------------------------------------------------------------------------
+    */
+    public function calendar($id)
+    {
+        $ranges = Reservation::where('car_id', $id)
+            ->where('status', '!=', 'declined')
+            ->get(['start_date', 'end_date']);
+
+        return response()->json($ranges);
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | USER RESERVATIONS
+    |--------------------------------------------------------------------------
+    */
     public function myReservations(Request $request)
     {
         return Reservation::where('user_id', $request->user()->id)
@@ -61,7 +85,12 @@ class ReservationController extends Controller
             ->get();
     }
 
-    // 🟣 Admin + Staff only: update reservation status
+
+    /*
+    |--------------------------------------------------------------------------
+    | UPDATE RESERVATION STATUS (ADMIN ONLY)
+    |--------------------------------------------------------------------------
+    */
     public function updateStatus(Request $request, $id)
     {
         $request->validate([
@@ -74,9 +103,7 @@ class ReservationController extends Controller
             return response()->json(['message' => 'Reservation not found'], 404);
         }
 
-        $reservation->update([
-            'status' => $request->status
-        ]);
+        $reservation->update(['status' => $request->status]);
 
         // Notify user by email
         $reservation->user->notify(new ReservationStatusUpdated($reservation));
@@ -87,7 +114,12 @@ class ReservationController extends Controller
         ]);
     }
 
-    // 🟣 Admin + Staff: view all reservations
+
+    /*
+    |--------------------------------------------------------------------------
+    | ADMIN — LIST ALL RESERVATIONS
+    |--------------------------------------------------------------------------
+    */
     public function index()
     {
         return Reservation::with('user', 'car')->get();
